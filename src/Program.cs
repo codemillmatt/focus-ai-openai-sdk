@@ -3,6 +3,8 @@
 // Licensed under the MIT license. See LICENSE.md file in the project root for full license information.
 //
 
+using Azure.AI.OpenAI;
+using Azure.Identity;
 using OpenAI;
 using OpenAI.Assistants;
 using OpenAI.Chat;
@@ -14,7 +16,7 @@ public class Program
 {
     public static async Task Main(string[] args)
     {
-        ChatStreamingWithTokens();
+        //ChatStreamingWithTokens();
 
         await AssistantsWithChunks();
     }
@@ -23,11 +25,14 @@ public class Program
     {
         // Assistants is a beta API and subject to change; acknowledge its experimental status by suppressing the matching warning.
 #pragma warning disable OPENAI001
-        if (Environment.GetEnvironmentVariable("OPENAI_API_KEY") == null)
-        {
-            throw new InvalidOperationException("Please set the OPENAI_API_KEY environment variable.");
-        }
-        OpenAIClient openAIClient = new(Environment.GetEnvironmentVariable("OPENAI_API_KEY"));
+        //if (Environment.GetEnvironmentVariable("OPENAI_API_KEY") == null)
+        //{
+        //    throw new InvalidOperationException("Please set the OPENAI_API_KEY environment variable.");
+        //}
+       
+        //OpenAIClient openAIClient = new(Environment.GetEnvironmentVariable("OPENAI_API_KEY"));
+        
+        AzureOpenAIClient openAIClient = new(new Uri(""), new DefaultAzureCredential());
         FileClient fileClient = openAIClient.GetFileClient();
         AssistantClient assistantClient = openAIClient.GetAssistantClient();
 
@@ -66,7 +71,9 @@ public class Program
             "monthly_sales.json",
             FileUploadPurpose.Assistants);
 
-        VectorStoreClient vectorStoreClient = new();
+
+        VectorStoreClient vectorStoreClient = openAIClient.GetVectorStoreClient();
+        //VectorStoreClient vectorStoreClient = new VectorStoreClient()
         // Set the chunk size to whatever you want
         FileChunkingStrategy chunkingStrategy = FileChunkingStrategy.CreateStaticStrategy(100, 30);
         // Now, we'll create a vector store with the file
@@ -100,13 +107,7 @@ public class Program
             },
         };
 
-        Assistant assistant = assistantClient.CreateAssistant("gpt-4o-mini", assistantOptions);
-
-        // Now we'll create a thread with a user query about the data already associated with the assistant, then run it
-        ThreadCreationOptions threadOptions = new()
-        {
-            InitialMessages = { "How well did product 113045 sell in February? Graph its trend over time." }
-        };
+        Assistant assistant = assistantClient.CreateAssistant("gpt-4o", assistantOptions);
 
         AssistantThread thread = assistantClient.CreateThread(new ThreadCreationOptions()
         {
@@ -137,10 +138,23 @@ public class Program
                 Console.WriteLine($"--- Run started! ---");
             }
             if (streamingUpdate is MessageContentUpdate contentUpdate)
-            {
+            {               
                 Console.Write(contentUpdate.Text);
+
+                if (!string.IsNullOrEmpty(contentUpdate.ImageFileId))
+                {
+                    var imageInfo = fileClient.GetFile(contentUpdate.ImageFileId);
+                    BinaryData imageBytes = fileClient.DownloadFile(contentUpdate.ImageFileId);
+                    using FileStream stream = File.OpenWrite($"{imageInfo.Value.Filename}.png");
+                    imageBytes.ToStream().CopyTo(stream);
+
+                    Console.WriteLine($"Image saved to {imageInfo.Value.Filename}.png");
+                }
             }
         }
+
+        
+        
 
         // Optionally, delete any persistent resources you no longer need.
         _ = assistantClient.DeleteThread(thread.Id);
@@ -150,10 +164,16 @@ public class Program
 
     public static void ChatStreamingWithTokens()
     {
-        ChatClient client = new(model: "gpt-4o-mini", Environment.GetEnvironmentVariable("OPENAI_API_KEY"));
+        Azure.AI.OpenAI.AzureOpenAIClient aiClient = new Azure.AI.OpenAI.AzureOpenAIClient(new Uri(""), new DefaultAzureCredential());
+        ChatClient client = aiClient.GetChatClient("gpt-4");
+
+
+        //ChatClient client = new(model: "gpt-4o-mini", Environment.GetEnvironmentVariable("OPENAI_API_KEY"));
         var messages = new List<ChatMessage>();
         messages.Add(ChatMessage.CreateSystemMessage("Say hello"));
 
+        ChatCompletionOptions options = new ChatCompletionOptions();
+       
         CollectionResult<StreamingChatCompletionUpdate> updates = client.CompleteChatStreaming(messages);
 
         Console.WriteLine($"[ASSISTANT]:");
